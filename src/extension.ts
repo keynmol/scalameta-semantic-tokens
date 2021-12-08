@@ -106,8 +106,7 @@ class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensPro
 		let result = scalameta.parseSource(text);
 		function addToken(element: any, cls: string, raw: string, modifiers: string[]) {
 			let tok = token(element, cls, raw, modifiers);
-			console.log("Yay", element);
-			console.log("While browsing ", tok, raw);
+
 			r.push(tok);
 		}
 
@@ -126,25 +125,26 @@ class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensPro
 			addToken(element, 'keyword', 'import', []);
 			element.importers.forEach((importer: any) => {
 				importer.importees.forEach((importee: any) => {
-					addToken(importee.name, 'namespace', importee.name.value, []);
+					if (importee.type !== "Importee.Wildcard") {
+						addToken(importee.name, 'interface', importee.name.value, []);
+					}
 				});
 				addToken(importer.ref, 'namespace', importer.ref.value, []);
 			});
 		}
 
-		function handleType(element: any) {
+		function handleType(element: any, base: string) {
 			if (element.type === "Type.Select") {
-				handleType(element.name);
-				handleType(element.qual);
+				handleType(element.name, base);
+				handleType(element.qual, base);
 			} else if (element.type === "Type.Name") {
-				addToken(element, 'interface', element.value, []);
+				addToken(element, base, element.value, []);
 			} else if (element.type === "Term.Name") {
-				addToken(element, 'property', element.value, []);
+				addToken(element, base, element.value, []);
 			}
 		}
 
 		function handleArgs(element: any) {
-			console.log("argss", element);
 			element.forEach((arg: any) => {
 				if (arg.type === 'Lit.String') {
 					addToken(arg, 'string', arg.syntax, []);
@@ -154,44 +154,117 @@ class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensPro
 
 		function handleTemplate(element: any) {
 			element.inits.forEach((init: any) => {
-				handleType(init.tpe);
+				handleType(init.tpe, 'interface');
 				init.argss.forEach((args: any) => {
 					handleArgs(args);
 				});
 			});
 		}
 
-		function handleClass(element: any) {
-			var isAbstract = false;
+		function handleMods(mods: any) {
+			mods.forEach((mod: any) => {
+				if (mod.type === "Mod.Sealed") {
+					addToken(mod, 'keyword', 'sealed', []);
+				} else if (mod.type === "Mod.Abstract") {
+					addToken(mod, 'keyword', 'abstract', []);
+				} else if (mod.type === "Mod.Case") {
+					addToken(mod, 'keyword', 'case', []);
+				} else if (mod.type === "Mod.ValParam") {
+					addToken(mod, 'keyword', 'val', []);
+				}
+			});
+		}
 
+		function handleClass(element: any) {
 			element.mods.forEach((mod: any) => {
 				if (mod.type === "Mod.Sealed") {
 					addToken(mod, 'keyword', 'sealed', []);
 				} else if (mod.type === "Mod.Abstract") {
-					isAbstract = true;
 					addToken(mod, 'keyword', 'abstract', []);
 				} else if (mod.type === "Mod.Case") {
 					addToken(mod, 'keyword', 'case', []);
 				}
 			});
-			if (isAbstract) {
-				addToken(element.name, 'interface', element.name.value, ['declaration', 'abstract']);
-			}
-			else {
-				addToken(element.name, 'class', element.name.value, ['declaration']);
-			}
+			addToken(element.name, 'class', element.name.value, ['declaration']);
 
 			handleTemplate(element.templ);
+			// console.log("CTOR: ", element.ctor);
+			if (element.ctor !== undefined) {
+				element.ctor.paramss.forEach((params: any) => {
+					handleParams(params);
+				});
+			}
+
+		}
+
+		function handlePackage(pkg: any) {
+			addToken(pkg, "keyword", "package", []);
+			handleType(pkg.ref, 'namespace');
+			pkg.stats.forEach((element: any) => {
+				handle(element);
+			});
+		}
+
+		function handleParams(params: any) {
+			params.forEach((param: any) => {
+				handleMods(param.mods);
+				addToken(param.name, 'parameter', param.name.value, []);
+				handleType(param.decltpe, 'interface');
+			});
+		}
+
+		function handleLit(element: any) {
+			if (element.type === "Lit.Int") {
+				addToken(element, 'number', element.syntax, []);
+			} else if (element.type === 'Lit.String') {
+				addToken(element, 'string', element.syntax, []);
+			}
 		}
 
 		function handle(element: any) {
+			console.log("Handling ", element);
 			if (element.type === 'Defn.Class' || element.type === 'Defn.Object') {
 				handleClass(element);
 				element.templ.stats.forEach(handle);
 			} else if (element.type === 'Import') {
 				handleImport(element);
-
+			} else if (element.type === 'Pkg') {
+				handlePackage(element);
+			} else if (element.type === "Defn.Val") {
+				handleVal(element);
+			} else if (element.type.startsWith("Lit.")) {
+				handleLit(element);
+			} else if (element.type === "Defn.Def") {
+				handleDef(element);
+			} else if (element.type.startsWith("Term.")) {
+				handleTerm(element);
 			}
+		}
+
+		function handleTerm(element: any) {
+			if (element.type === "Term.Name") {
+				addToken(element, "variable", element.value, []);
+			}
+		}
+
+		function handleDef(element: any) {
+			addToken(element, 'keyword', 'def', []);
+			addToken(element.name, 'method', element.name.value, []);
+			if (element.paramss !== undefined) {
+				element.paramss.forEach((params: any) => {
+					handleParams(params);
+				});
+			}
+
+			handle(element.body);
+		}
+
+		function handleVal(element: any) {
+			addToken(element, 'keyword', 'val', []);
+			element.pats.forEach((pat: any) => {
+				handle(pat.name);
+			});
+			handle(element.rhs);
 		}
 
 
