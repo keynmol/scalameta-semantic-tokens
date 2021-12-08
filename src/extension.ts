@@ -104,45 +104,88 @@ class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensPro
 		}
 
 		let result = scalameta.parseSource(text);
-		result.stats.forEach((element: any) => {
-			function token(element: any, cls: string, raw: string, modifiers: string[]): IParsedToken {
-				let [line, pos] = lineNumber(element.pos.start);
-				return {
-					line: line,
-					startCharacter: pos,
-					length: raw.length,
-					tokenType: cls,
-					tokenModifiers: modifiers
-				};
+		function addToken(element: any, cls: string, raw: string, modifiers: string[]) {
+			let tok = token(element, cls, raw, modifiers);
+			console.log("Yay", element);
+			console.log("While browsing ", tok, raw);
+			r.push(tok);
+		}
+
+		function token(element: any, cls: string, raw: string, modifiers: string[]): IParsedToken {
+			let [line, pos] = lineNumber(element.pos.start);
+			return {
+				line: line,
+				startCharacter: pos,
+				length: raw.length,
+				tokenType: cls,
+				tokenModifiers: modifiers
 			};
+		};
 
-			function addToken(element: any, cls: string, raw: string, modifiers: string[]) {
-				let tok = token(element, cls, raw, modifiers);
-				console.log("Yay", element);
-				console.log("While browsing ", tok, raw);
-				r.push(tok);
+		function handleImport(element: any) {
+			addToken(element, 'keyword', 'import', []);
+			element.importers.forEach((importer: any) => {
+				importer.importees.forEach((importee: any) => {
+					addToken(importee.name, 'namespace', importee.name.value, []);
+				});
+				addToken(importer.ref, 'namespace', importer.ref.value, []);
+			});
+		}
+
+		function handleType(element: any) {
+			if (element.type === "Type.Select") {
+				handleType(element.name);
+				handleType(element.qual);
+			} else if (element.type === "Type.Name") {
+				addToken(element, 'interface', element.value, []);
+			} else if (element.type === "Term.Name") {
+				addToken(element, 'property', element.value, []);
 			}
-			console.log(element);
+		}
 
-			if (element.type === 'Defn.Class' || element.type === 'Defn.Object') {
+		function handleTemplate(element: any) {
+			element.inits.forEach((element: any) => {
+				handleType(element.tpe);
+			});
+		}
+
+		function handleClass(element: any) {
+			var isAbstract = false;
+
+			element.mods.forEach((mod: any) => {
+				if (mod.type === "Mod.Sealed") {
+					addToken(mod, 'keyword', 'sealed', []);
+				} else if (mod.type === "Mod.Abstract") {
+					isAbstract = true;
+					addToken(mod, 'keyword', 'abstract', []);
+				} else if (mod.type === "Mod.Case") {
+					addToken(mod, 'keyword', 'case', []);
+				}
+			});
+			if (isAbstract) {
+				addToken(element.name, 'interface', element.name.value, ['declaration', 'abstract']);
+			}
+			else {
 				addToken(element.name, 'class', element.name.value, ['declaration']);
-				element.mods.forEach((mod: any) => {
-					if (mod.type === "Mod.Sealed") {
-						addToken(mod, 'keyword', 'sealed', []);
-					} else if (mod.type === "Mod.Abstract") {
-						addToken(mod, 'keyword', 'abstract', []);
-					}
-				});
+			}
+
+			handleTemplate(element.templ);
+		}
+
+		function handle(element: any) {
+			if (element.type === 'Defn.Class' || element.type === 'Defn.Object') {
+				handleClass(element);
+				element.templ.stats.forEach(handle);
 			} else if (element.type === 'Import') {
-				addToken(element, 'keyword', 'import', []);
-				element.importers.forEach((importer: any) => {
-					importer.importees.forEach((importee: any) => {
-						addToken(importee.name, 'namespace', importee.name.value, []);
-					});
-					addToken(importer.ref, 'namespace', importer.ref.value, []);
-				});
+				handleImport(element);
 
 			}
+		}
+
+
+		result.stats.forEach((element: any) => {
+			console.log(element);
+			handle(element);
 		});
 
 		console.log(r);
