@@ -143,9 +143,21 @@ class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensPro
 			}
 		}
 
+		function handleArgs(element: any) {
+			console.log("argss", element);
+			element.forEach((arg: any) => {
+				if (arg.type === 'Lit.String') {
+					addToken(arg, 'string', arg.syntax, []);
+				}
+			});
+		}
+
 		function handleTemplate(element: any) {
-			element.inits.forEach((element: any) => {
-				handleType(element.tpe);
+			element.inits.forEach((init: any) => {
+				handleType(init.tpe);
+				init.argss.forEach((args: any) => {
+					handleArgs(args);
+				});
 			});
 		}
 
